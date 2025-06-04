@@ -1,11 +1,10 @@
 # loading packages
 import os
-import tqdm as tqdm
+#import tqdm as tqdm
 import polars as pl
 import plotnine as p9
-import seaborn as sns
 import datetime
-import statsmodels.api as sm
+
 # import pymc as pm
 # import arviz as az
 # import preliz as pz
@@ -71,9 +70,6 @@ joined_df = (
     .sort(["swim_site", "date"])       
     )
 
-
-
-
 # now working with the joined data 
 on_vars = ["log_bact_load_1", "water_temperature_corrected", "log_conductivity_1", 
            "max_temp_C", "min_temp_C", "precipitation_mm"]
@@ -124,7 +120,7 @@ joined_df2 = (
 vars_to_detrend = ["log_bact_load_1", "log_conductivity_1", "max_temp_C", 
                    "min_temp_C", "precipitation_mm", "water_temperature_corrected"]
 
-window_size_val = 10
+window_size_val = 52
 exprs = (
     [(pl.col(v).rolling_mean(window_size=window_size_val))
             .over("swim_site")
@@ -143,21 +139,31 @@ joined_df_detrended = (
     .with_columns(exprs)
 )
 
-pairs_df = (
-    joined_df_detrended
-    .select((["swim_site"] + vars_to_detrend))
-    .to_pandas()
-)
+def gen_scatter_plot(var1, var2):
+    plt = (
+        p9.ggplot(joined_df_detrended, p9.aes(x=var1, y=var2, color="swim_site"))
+        + p9.geom_point(size=3, alpha=0.5)
+        + p9.theme_bw()
+        + p9.theme(legend_position="none")
+    )
+    return plt
 
-# pairs_plt = (
-#     sns.pairplot(
-#     pairs_df,
-#     hue="swim_site",        # Color by group (if categorical)
-#     diag_kind="kde",        # Use KDE instead of histograms
-#     corner=True,            # Only show lower triangle
-#     plot_kws={"alpha": 0.5} # Set transparency
-# ))
-#  pairs_plt._legend.remove()
+def gen_time_series_plot(var):
+    plt = (
+        p9.ggplot(joined_df_detrended, p9.aes(x="date", y=var, color="swim_site"))
+        + p9.geom_line()
+        + p9.theme_bw()
+        + p9.theme(legend_position="none")
+    )
+    return plt
+
+# make a grid plot 
+c11 = gen_scatter_plot("precipitation_mm_resid", "log_bact_load_1_resid")
+c21 = gen_scatter_plot("log_conductivity_1_resid", "log_bact_load_1_resid")
+c12 = gen_scatter_plot("water_temperature_corrected_resid", "log_bact_load_1_resid")
+c22 = gen_scatter_plot("max_temp_C_resid", "log_bact_load_1_resid")
+
+
 
 
 
