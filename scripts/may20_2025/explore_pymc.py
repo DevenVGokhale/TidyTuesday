@@ -1,29 +1,33 @@
 # loading packages
-import os
 
 # linear algebra  and simulation stack
 import numpy as np
+import sciris as sc
 from numba import njit
 from scipy.integrate import odeint
-
+from collections import namedtuple
 
 # data wrangling stack
 import polars as pl
 import plotnine as p9
-import datetime
+
 
 # paramter eatimation stack
-import pymc as pm
+# import pymc as pm
 
 # import arviz as az
 import preliz as pz
 from scipy import stats as stats
 
-p9.theme_set(p9.theme_bw(base_size=13))
+p9.theme_set(p9.theme_bw())
 # start with something basic ---
 # make some pretty distribution plots by generating from distributions
 
 np.random.seed(72)
+
+
+def give_namedtuple(tuple_name, elem_n_list):
+    return namedtuple(tuple_name, elem_n_list)
 
 
 def gen_random_poisson_distributions(mean, size):
@@ -67,7 +71,7 @@ simulation_plt = (
     + p9.labs(x="Sample", y="Frequency", fill="Mean\nValue", colour="Mean\nValue")
 )
 
-simulation_plt
+# simulation_plt
 
 
 # lets see if I can work with differential equations
@@ -95,26 +99,41 @@ def seir_log_skel(logX, t, theta):
     # Reconstruct compartments with clamping
     S = min(max(np.exp(x), minval), maxval)
     E = min(max(np.exp(e), minval), maxval)
-    I = min(max(np.exp(y), minval), maxval)
+    I_ = min(max(np.exp(y), minval), maxval)
     R = min(max(np.exp(r), minval), maxval)
-    N = S + E + I + R
+    N = S + E + I_ + R
 
     # Time-varying transmission rate
-    beta0 = R0 * gamma
+    beta0 = (R0 * (gamma + mu) * (sigma + mu)) / sigma  # * (sigma + mu)
     beta_t = beta0 * (1 + beta1 * np.sin(2 * np.pi * t))
-    lambda_t = beta_t * I / max(N, 1e-12)
+    lambda_t = beta_t * I_ / max(N, 1e-12)
 
     # Derivatives
     dx = mu * N * np.exp(-x) - lambda_t - mu
     de = lambda_t * np.exp(x - e) - sigma - mu
     dy = sigma * np.exp(e - y) - gamma - mu
     dr = gamma * np.exp(y - r) - mu
-    dC = gamma * I  # raw value, not log-transformed
+    dC = gamma * I_  # raw value, not log-transformed
 
     return np.array([dx, de, dy, dr, dC])
 
 
-# the
+def sim_obs_model(x, rho=0.1, model="poisson"):
+    """
+    simulates an observation model
+    ## Parameters --
+    x : the underlying true state size
+    rho : reporting error
+    model: statistical model of reporting
+    """
+
+    if model == "poisson":
+        lambda_ = x * rho
+        # if lambda_ < 0 or np.isnan(lambda_):
+        #    lambda_ = 0.0
+        sample = np.random.poisson(lambda_)
+
+    return sample
 
 
 def generate_trajectory(
@@ -128,6 +147,7 @@ def generate_trajectory(
     beta1,
     sigma,
     gamma,
+    rho,
     dt=1,
     nt_pts=20,
     etol=1e-12,
@@ -172,49 +192,81 @@ def generate_trajectory(
         func=seir_log_skel, y0=logX0, t=time, args=(theta,), rtol=1e-6, atol=1e-9
     )
 
-    # extract and transform
+    # extract and transform back to the natural scale
     sol_linear = np.empty_like(sol)
     sol_linear[:, :4] = np.exp(sol[:, :4])  # S, E, I, R
     sol_linear[:, 4] = sol[:, 4]  # C (linear)
 
+    # redefine the results as datfarame
     result = pl.DataFrame(sol_linear, schema=["S", "E", "I", "R", "C"]).with_columns(
-        C=(pl.col("C") - pl.col("C").shift(1)).fill_null(0), time=time
+        C=(pl.col("C") - pl.col("C").shift(1)).fill_null(0).clip(lower_bound=0),
+        time=time,
     )
 
-    if long_form == True:
+    # simulate and add observation under the the obseravtions model
+    obs = sim_obs_model(result["C"].to_numpy(), rho=rho)
+    result = result.with_columns(pl.Series("Obs", obs))
+
+    # to plot the result the express the dataframe into a long format
+    if long_form:
         result = result.unpivot(
-            on=["S", "E", "I", "R", "C"],
+            on=["S", "E", "I", "R", "C", "Obs"],
             index=["time"],
             variable_name="compartment",
             value_name="size",
         ).with_columns(
             pl.col("compartment").cast(
-                pl.Enum([str(c) for c in ["S", "E", "I", "R", "C"]])
+                pl.Enum([str(c) for c in ["S", "E", "I", "R", "C", "Obs"]])
             )
         )
 
     return result
 
 
-# testing the differential equations  and making a simple plot
-plot_data = generate_trajectory(
-    S_0=10000,
-    E_0=0,
-    I_0=10,
-    R_0=(100000 - 10 - 10000),
-    C_0=0,
+def cal_ee(p):
+    """calculates the endemic equilibria across all compartments"""
+    N, R0, gamma, sigma, mu = [p[k] for k in ["N", "R0", "gamma", "sigma", "mu"]]
+
+    end_eq = sc.odict(
+        See=1 / R0,
+        Eee=((R0 - 1) * mu) / R0 * (sigma + mu),
+        Iee=((R0 - 1 * mu * sigma) / (R0 * (sigma + mu) * (gamma + mu))),
+    )
+    return end_eq
+
+
+param_dict = sc.odict(
+    N=1e5,
     mu=1 / 70,
-    R0=2,
-    beta1=0.6,
+    R0=10,
+    beta1=0.11,
     sigma=1 / (3 / 365.25),
     gamma=1 / (4 / 365.25),
-    dt=1 / 100,
-    nt_pts=200,
+)
+
+cal_ee(param_dict)
+
+
+# testing the differential equations  and making a simple plot
+plot_data = generate_trajectory(
+    S_0=100000,
+    E_0=0,
+    I_0=100,
+    R_0=(1000000 - 100 - 100000),
+    C_0=0,
+    mu=1 / 70,
+    R0=10,
+    beta1=0.11,
+    sigma=1 / (3 / 365.25),
+    gamma=1 / (4 / 365.25),
+    rho=0.05,
+    dt=1 / 52,
+    nt_pts=2000,
 )
 
 traj_plot = (
     p9.ggplot(
-        plot_data.filter(pl.col("time") > 180),
+        plot_data.filter(pl.col("time") > 1995),
         p9.aes(x="time", y="size", color="compartment"),
     )
     + p9.geom_line()
