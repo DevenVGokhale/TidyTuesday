@@ -6,5 +6,4 @@
 *.xls
 *.txt
 *.woff
-
-scripts/July10_2025/etl_files/libs/quarto-html/anchor.min.js
+*.DS_Store
