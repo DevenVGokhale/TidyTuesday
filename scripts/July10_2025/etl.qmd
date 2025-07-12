@@ -1,0 +1,208 @@
+---
+title: Predicting Concrete Compressive Strength
+author: Deven Gokhale
+format: 
+    html:
+        theme: solar
+        code-fold: true
+jupyter: python3
+---
+
+# Introduction:
+To be filled in later 
+
+```{python setup}
+
+# packages 
+import os 
+root = "/Users/devengokhale/Documents/GitHub/TidyTuesday"
+if os.getcwd() == root:
+    os.chdir("./scripts/July10_2025/")
+
+from typing import Dict
+
+import polars as pl
+
+import plotnine as p9
+import seaborn as sns
+import matplotlib.pyplot as plt 
+# set seaborn stye
+sns.set_theme(style="whitegrid")
+
+import pymc as pm
+import arviz as az
+import pymc_bart as pmb
+from sklearn.model_selection import train_test_split
+
+import utility_fns as uf
+
+data_path = "data/"
+```
+
+```{python}
+#\ label: Load data 
+concrete = pl.read_excel(os.path.join(data_path, "Concrete_Data.xls"), sheet_name="Sheet1")
+
+new_column_names = [
+    "cement", "blast_furnace_slag", "fly_ash", "water", 
+    "superplasticizer", "coarse_aggregate", "fine_aggregate", 
+    "age_days", "compressive_strength"
+    ]
+
+concrete.columns = new_column_names
+
+#concrete_dict = uf.generate_split(concrete)
+
+#concrete = concrete_dict["combined"]
+
+concrete.head()    
+```
+
+# Exploratory Data Analysis 
+To be filled later ...
+
+## Starting with visualizing some relationships 
+
+### Describing the the distribution of data 
+These are raw values 
+```{python}
+#| label: boxen_plot
+#| echo: false
+#| fig-cap: "This is figure caption"
+
+sns.boxenplot(concrete.unpivot(), x = "value", y="variable")
+```
+
+Standardizing the dataset for a better comparsion across all the values -- 
+
+```{python}
+concrete = (
+    concrete
+    .with_columns(
+        (pl.col("age_days").log()).alias("log_age_days")
+        )
+)
+
+concrete_std = (
+    concrete
+    .select([
+        ((pl.col(c) - pl.col(c).mean())/pl.col(c).std()).alias(c)
+        for c in concrete.columns
+    ])
+)
+
+concrete_std = concrete_std.drop("age_days")
+
+concrete_std.head()
+```
+
+replotting the distribution of the standardized data 
+
+```{python}
+#| label: boxen_plot_std
+sns.boxenplot(concrete_std.unpivot(), x = "value", y="variable")
+```
+
+### Pairwise corelations plot 
+```{python}
+#| label: pairwise_corelation 
+#| echo: false
+#| fig-cap: "This is a figure caption"
+sns.pairplot(concrete_std.to_pandas(), diag_kind="kde")
+```
+
+### Clustering between the variables to check the 
+```{python}
+sns.clustermap(concrete_std.to_pandas().corr(), cmap="coolwarm", annot=True)
+``` 
+
+# Modeling using PyMC
+Trying out pymc-bart  -- finally 
+
+more text to come 
+
+```{python}
+
+splits = uf.generate_split(concrete_std)
+# unpack the values to 
+X_train, X_test, y_train, y_test = splits["train"][0], splits["test"][0], splits["train"][1], splits["test"][1]
+
+X_cols = X_train.columns
+y_col = y_train.columns
+
+X_train = X_train.drop("partition").to_pandas()
+y_train = y_train.to_pandas().squeeze()
+X_test = X_test.drop("partition").to_numpy()
+y_test = y_test.to_numpy().squeeze()
+
+combined = splits["combined"]
+```
+
+
+```{python}
+
+print(X_train.shape)
+print(y_train.shape)
+
+```
+
+Quickly checking distributions before moving to model the response using BART -- 
+
+```{python}
+
+#\ label: standardaized_distribution 
+#| echo: fakse
+#| fig-cap: 
+plt.figure()
+sns.boxenplot(combined.unpivot(index="partition"), x="value", y="variable", hue="partition")
+```
+
+
+similarly hoping that scatter plots also look pretty similar
+
+```{python}
+#| label: pairwise_corelation_split 
+#| echo: false
+#| fig-cap: "This is a figure caption"
+plt.figure()
+sns.pairplot(
+    combined.to_pandas(), diag_kind="kde", 
+    hue="partition", plot_kws= {"alpha":0.2,}
+    )
+```
+
+
+```{python}
+
+with pm.Model() as model_compress:
+    
+    σ = pm.HalfNormal("σ", 1)
+    
+    μ = pmb.BART("μ", X_train, y_train)
+    
+    y = pm.Normal("y", mu=μ, sigma=σ, observed=y_train)
+
+    idata_compress = pm.sample()
+    
+    pm.sample_posterior_predictive(idata_compress, extend_inferencedata=True)
+
+```
+
+
+
+```{python}
+az.plot_trace(idata_compress)
+```
+
+
+```{python}
+az.plot_ppc(idata_compress)
+```
+
+
+```{python}
+
+pmb.plot_pdp(μ, X_train, y_train, grid="wide")
+
+```
+
