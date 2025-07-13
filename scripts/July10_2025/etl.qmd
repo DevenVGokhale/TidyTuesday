@@ -194,15 +194,23 @@ with pm.Model() as model_compress:
 az.plot_trace(idata_compress)
 ```
 
-
 ```{python}
-az.plot_ppc(idata_compress)
+pmb.plot_convergence(idata_compress, var_name="μ")
 ```
 
+```{python}
+az.plot_ppc(idata_compress, kind="cumulative", observed_rug=True)
+```
 
 ```{python}
-
 pmb.plot_pdp(μ, X_train, y_train, grid="wide")
-
 ```
+
+```{python}
+
+vi_results = pmb.compute_variable_importance(idata_compress, μ, X_train)
+pmb.plot_variable_importance(vi_results)
+```
+
+
 
