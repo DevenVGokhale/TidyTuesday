@@ -76,7 +76,7 @@ These are raw values
 #| label: boxen_plot
 #| echo: false
 #| fig-cap: "This is figure caption"
-
+plt.figure()
 sns.boxenplot(concrete.unpivot(), x = "value", y="variable")
 ```
 
@@ -153,6 +153,9 @@ combined = splits["combined"]
 
 print(X_train.shape)
 print(y_train.shape)
+print(X_test.shape)
+print(y_test.shape)
+
 
 ```
 
@@ -187,16 +190,18 @@ sns.pairplot(
 with pm.Model() as model_compress:
 
     X = pm.Data("X", X_train)
+    y = pm.Data("y", y_train)
     
     σ = pm.HalfNormal("σ", 1)
+    μ = pmb.BART("μ", X, y)
     
-    μ = pmb.BART("μ", X_train, y_train)
-    
-    y = pm.Normal("y", mu=μ, sigma=σ, observed=y_train)
+    y_hat = pm.Normal("y_hat", mu=μ, sigma=σ, observed=y)
 
     idata_compress = pm.sample(tune=1000)
     
-    pm.sample_posterior_predictive(idata_compress, extend_inferencedata=True, random_seed=RANDOM_SEED)
+    y_sample_train = pm.sample_posterior_predictive(idata_compress, 
+                                                    extend_inferencedata=True,
+                                                    random_seed=RANDOM_SEED)
 
 ```
 
@@ -208,23 +213,54 @@ az.plot_trace(idata_compress, var_names="σ")
 pmb.plot_convergence(idata_compress, var_name="μ")
 ```
 
-```{python}
-az.plot_ppc(idata_compress, kind="cumulative", observed_rug=True)
-```
 
 ```{python}
-# out of sample --- 
+# out of sample --- sample from the posterior to then compare with the oos test set
 with model_compress:
     X.set_value(X_test)
-    ppc_oos = pm.sample_posterior_predictive(trace=idata_compress, random_seed=RANDOM_SEED)
+    y.set_value(y_test)
+    y_sample_test = pm.sample_posterior_predictive(idata_compress, random_seed=RANDOM_SEED)
 
 ```
 
+
 ```{python}
-pmb.plot_pdp(μ, X_train, y_train, grid="wide")
+fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(8,7), 
+                       sharex=True, sharey=True, layout="constrained")
+az.plot_ppc(y_sample_train, kind="cumulative", observed_rug=True, ax=ax[0])
+ax[0].set(title="Posterior Predictive Check (train)", ylabel="")
+az.plot_ppc(y_sample_test, kind="cumulative", observed_rug=True, ax=ax[1])
+ax[1].set(title="Posterior Predictive Check (test)", ylabel="Comrpression Strength")
+
+# Collect legend handles from one axis (both have same labels)
+handles, labels = ax[0].get_legend_handles_labels()
+
+# Add shared legend to the figure
+fig.legend(handles, labels, loc='upper center', ncol=len(labels), bbox_to_anchor=(0.5, 1.02))
+```
+
+
+```{python}
+
+# resetting the values of X an Y to train to run a few other analyses
+with model_compress:
+    X.set_value(X_train)
+    y.set_value(y_train)
+
+# Define layout
+fig, axes = plt.subplots(nrows=2, ncols=4, figsize=(16, 6))
+axes = axes.flatten()  # flatten to 1D list
+# Plot PDP with custom axes
+pmb.plot_pdp(
+    μ,               
+    X_train,
+    ax=axes          
+)
+plt.tight_layout()
 ```
 
 ```{python}
+vi_results = pmb.compute_variable_importance(idata_compress, μ, X_train)
 
 print(X_train.columns[vi_results["indices"]])
 
@@ -237,9 +273,8 @@ labels = [
     "Fine\naggregate",
     "Fly ash",
     "Coarse\naggregate"
-    ]
+]
 
-vi_results = pmb.compute_variable_importance(idata_compress, μ, X_train)
 pmb.plot_variable_importance(vi_results, labels=labels, plot_kwargs={"color_r2": "white"})
 ```
 
