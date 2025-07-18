@@ -15,6 +15,7 @@ To be filled in later
 
 # packages 
 import os 
+
 root = "/Users/devengokhale/Documents/GitHub/TidyTuesday"
 if os.getcwd() == root:
     os.chdir("./scripts/July10_2025/")
@@ -62,7 +63,7 @@ concrete.columns = new_column_names
 
 #concrete = concrete_dict["combined"]
 
-concrete.head()    
+concrete.head()
 ```
 
 # Exploratory Data Analysis 
@@ -142,8 +143,8 @@ y_col = y_train.columns
 
 X_train = X_train.drop("partition").to_pandas()
 y_train = y_train.to_pandas().squeeze()
-X_test = X_test.drop("partition").to_numpy()
-y_test = y_test.to_numpy().squeeze()
+X_test = X_test.drop("partition").to_pandas()
+y_test = y_test.to_pandas().squeeze()
 
 combined = splits["combined"]
 ```
@@ -155,8 +156,7 @@ print(X_train.shape)
 print(y_train.shape)
 print(X_test.shape)
 print(y_test.shape)
-
-
+print(type(y_train))
 ```
 
 Quickly checking distributions before moving to model the response using BART -- 
@@ -186,7 +186,8 @@ sns.pairplot(
 
 
 ```{python}
-
+#\ label: Fitting full model
+#| cache: true 
 with pm.Model() as model_compress:
 
     X = pm.Data("X", X_train)
@@ -202,7 +203,6 @@ with pm.Model() as model_compress:
     y_sample_train = pm.sample_posterior_predictive(idata_compress, 
                                                     extend_inferencedata=True,
                                                     random_seed=RANDOM_SEED)
-
 ```
 
 ```{python}
@@ -228,9 +228,9 @@ with model_compress:
 fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(8,7), 
                        sharex=True, sharey=True, layout="constrained")
 az.plot_ppc(y_sample_train, kind="cumulative", observed_rug=True, ax=ax[0])
-ax[0].set(title="Posterior Predictive Check (train)", ylabel="")
+ax[0].set(title="Posterior Predictive Check (train)", ylabel="Compression Strength", xlabel="")
 az.plot_ppc(y_sample_test, kind="cumulative", observed_rug=True, ax=ax[1])
-ax[1].set(title="Posterior Predictive Check (test)", ylabel="Comrpression Strength")
+ax[1].set(title="Posterior Predictive Check (test)", ylabel="Compression Strength")
 
 # Collect legend handles from one axis (both have same labels)
 handles, labels = ax[0].get_legend_handles_labels()
@@ -241,7 +241,6 @@ fig.legend(handles, labels, loc='upper center', ncol=len(labels), bbox_to_anchor
 
 
 ```{python}
-
 # resetting the values of X an Y to train to run a few other analyses
 with model_compress:
     X.set_value(X_train)
@@ -281,4 +280,52 @@ pmb.plot_variable_importance(vi_results, labels=labels, plot_kwargs={"color_r2":
 
 ```{python}
 az.plot_energy(idata_compress)
+```
+
+```{python}
+# getting rid of the nuissance variables 
+X_train_reduced = (
+    pl.DataFrame(X_train)
+    .select("log_age_days", "cement", "blast_furnace_slag", "water")
+)
+
+X_test_reduced = (
+    pl.DataFrame(X_train)
+    .select("log_age_days", "cement", "blast_furnace_slag", "water")
+)
+```
+
+```{python}
+# curious if function will play nicely 
+def fit_model(X: pl.DataFrame, y:pl.Series): 
+    # transform to usable datatypes
+    X_ = X.to_pandas()
+    # fit the model 
+    with pm.Model() as model:
+
+        X = pm.Data("X", X)
+        y = pm.Data("y", y)
+    
+        σ = pm.HalfNormal("σ", 1)
+        μ = pmb.BART("μ", X, y)
+    
+        y_hat = pm.Normal("y_hat", mu=μ, sigma=σ, observed=y)
+
+        idata = pm.sample(tune=1000)
+        
+        y_post_pred = pm.sample_posterior_predictive(idata_compress, 
+                                                     extend_inferencedata=True,
+                                                     random_seed=RANDOM_SEED
+                                                     )
+        return idata_compress, y_post_pred, model
+
+# refit the model 
+reduced_model = fit_model(X_train_reduced, y_train)
+```
+
+```{python}
+az.plot_ppc(reduced_model[1], kind="cumulative", observed_rug=True)
+```
+```{python}
+
 ```
