@@ -49,7 +49,7 @@ data_path = "data/"
 ```
 ```{python}
 #\ label: Load data 
-concrete = pl.read_excel(os.path.join(data_path, "Concrete_Data.xls"), sheet_name="Sheet1")
+concrete = pl.read_excel(os.path.join(data_path, "Concrete_Data.xls"), sheet_name="Sheet1") 
 
 new_column_names = [
     "cement", "blast_furnace_slag", "fly_ash", "water", 
@@ -64,6 +64,7 @@ concrete.columns = new_column_names
 #concrete = concrete_dict["combined"]
 
 concrete.head()
+
 ```
 
 # Exploratory Data Analysis 
@@ -157,6 +158,8 @@ print(y_train.shape)
 print(X_test.shape)
 print(y_test.shape)
 print(type(y_train))
+
+
 ```
 
 Quickly checking distributions before moving to model the response using BART -- 
@@ -205,6 +208,9 @@ with pm.Model() as model_compress:
                                                     random_seed=RANDOM_SEED)
 ```
 
+```{python}
+idata_compress
+```
 ```{python}
 az.plot_trace(idata_compress, var_names="σ")
 ```
